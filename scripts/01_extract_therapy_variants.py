@@ -57,10 +57,11 @@ def load_association_results(cohort_dir: Path) -> Optional[pd.DataFrame]:
         return None
 
     try:
-        df = pd.read_csv(fin_tbl, sep='\t')
+        # File is space/whitespace delimited
+        df = pd.read_csv(fin_tbl, sep=r'\s+')
         df['cohort'] = cohort_dir.name
 
-        # Standardize column names
+        # Standardize column names (file uses 'pvalue' not 'pval')
         col_mapping = {
             'CHROM': 'chrom',
             'POS': 'pos',
@@ -69,7 +70,8 @@ def load_association_results(cohort_dir: Path) -> Optional[pd.DataFrame]:
             'GENE': 'gene',
             'pvalue': 'pval',
             'coef': 'beta',
-            'zscore': 'zscore'
+            'zscore': 'zscore',
+            'ID': 'rsid'
         }
         df = df.rename(columns={k: v for k, v in col_mapping.items() if k in df.columns})
 

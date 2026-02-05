@@ -2,6 +2,27 @@
 
 > **UPDATE 2026-02-05**: See `ALPHAGENOME_EQTL_VALIDATION_PLAN.md` for validated implementation approach based on lessons from Cytokine Atlas AlphaGenome analysis. Key insight: AlphaGenome is most effective for variants with **unknown** regulatory effects (ideal for therapy-associated WES variants), NOT for prioritizing variants with known eQTL effects.
 
+## Pipeline Implementation Status (2026-02-05)
+
+The AlphaGenome + eQTL validation pipeline has been implemented and tested:
+
+| Script | Status | Output |
+|--------|--------|--------|
+| `01_extract_therapy_variants.py` | ✅ Complete | 15,918 variants (p<0.05) from 8 cohorts |
+| `02_query_alphagenome.py` | ✅ Complete (mock) | AlphaGenome predictions for all variants |
+| `03_validate_eqtl.py` | ✅ Complete | 22.3% DICE match, 44.3% GTEx match |
+| `04_prioritize_variants.py` | ✅ Complete | 5,056 Tier 1 variants |
+
+**Key Results:**
+- **Tier 1** (Therapy + AlphaGenome + eQTL): 5,056 variants (31.8%)
+- **Tier 2** (Therapy + AlphaGenome): 5,332 variants (33.5%)
+- **Tier 3** (Therapy + eQTL): 2,659 variants (16.7%)
+- **Tier 4** (Therapy only): 2,871 variants (18.0%)
+
+**Top candidates by cohort:** See `results/prioritized/prioritization_report.md`
+
+**Next steps:** Replace mock AlphaGenome predictions with real API calls to get accurate regulatory impact scores.
+
 **AlphaGenome and related deep learning models can meaningfully prioritize your suggestive germline variants (p~10⁻⁵), but statistical power limitations with N=1,640 require combining meta-analysis, Bayesian fine-mapping with functional priors, and polygenic approaches to maximize discovery.** The four variants you've identified (rs3783947/TSHR, rs737321/PARP12, rs909723/HLA-F-AS1, rs3806268/NLRP3) represent novel candidates—none appear in published immunotherapy association studies—making functional prioritization particularly valuable. Recent advances, including the GeRI study's validated polygenic risk score for autoimmune diseases predicting ICI discontinuation (HR=1.24), demonstrate that germline genetics can predict immunotherapy outcomes even from moderately-sized cohorts.
 
 ---
