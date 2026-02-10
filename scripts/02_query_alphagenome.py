@@ -9,18 +9,23 @@ This is the CORRECT use case for AlphaGenome:
 - Output: Predicted regulatory impact from AlphaGenome model
 
 Features:
-- Uses Google DeepMind AlphaGenome API
+- Uses Google DeepMind AlphaGenome API (batch predict_variants() for throughput)
+- SLURM array chunking: split variants across parallel jobs
+- Configurable batch size, concurrency, and sequence context length
 - Rate limiting with exponential backoff retry
-- Checkpoint every 100 variants for resume on failure
+- Checkpoint after each batch for resume on failure
 - Filter to immune-relevant tracks (GM12878, PBMCs, etc.)
 
 Input:
 - data/therapy_variants_all.csv (16,061 variants, p < 0.05)
 - data/therapy_variants_stringent.csv (83 variants, p < 0.001)
 
-Output:
+Output (per chunk when using --chunk-index/--num-chunks):
+- results/alphagenome/predictions_chunk{N}.json
+- results/alphagenome/checkpoint_chunk{N}.json
+
+Output (unchunked or after merging with 05_merge_predictions.py):
 - results/alphagenome/alphagenome_predictions.h5ad (AnnData with track scores)
-- results/alphagenome/alphagenome_checkpoint.json
 
 Environment:
 - ALPHAGENOME_API_KEY: Google DeepMind API key (required for real predictions)
@@ -86,7 +91,9 @@ class CheckpointManager:
 
     def __init__(self, checkpoint_path: Path):
         self.checkpoint_path = checkpoint_path
-        self.predictions_path = checkpoint_path.parent / 'alphagenome_predictions_checkpoint.json'
+        # Derive predictions checkpoint path from the checkpoint filename
+        stem = checkpoint_path.stem  # e.g. 'checkpoint_chunk0' or 'checkpoint'
+        self.predictions_path = checkpoint_path.parent / f'{stem}_predictions.json'
         self.data = self.load()
         self.predictions = self.load_predictions()
 
@@ -368,6 +375,190 @@ def run_real_predictions(
     return predictions
 
 
+def _get_seq_length(seq_length_str: str):
+    """Map sequence length string to SDK constant."""
+    from alphagenome.models import dna_client
+    mapping = {
+        '1mb': dna_client.SEQUENCE_LENGTH_1MB,
+        '100kb': dna_client.SEQUENCE_LENGTH_100KB,
+        '16kb': dna_client.SEQUENCE_LENGTH_16KB,
+    }
+    return mapping[seq_length_str]
+
+
+def run_batch_predictions(
+    variants_df: pd.DataFrame,
+    checkpoint: CheckpointManager,
+    api_key: str,
+    resume: bool = False,
+    output_dir: Path = None,
+    max_workers: int = 5,
+    batch_size: int = 50,
+    seq_length_str: str = '100kb',
+) -> Dict[str, Dict]:
+    """
+    Run AlphaGenome predictions using batch predict_variants() API.
+
+    Processes variants in batches for higher throughput via concurrent requests.
+
+    Args:
+        variants_df: DataFrame with variant information
+        checkpoint: CheckpointManager for resumable processing
+        api_key: AlphaGenome API key
+        resume: Whether to resume from checkpoint
+        output_dir: Directory for intermediate h5ad saves
+        max_workers: Concurrent API workers for predict_variants()
+        batch_size: Number of variants per batch call
+        seq_length_str: Sequence context length ('1mb', '100kb', '16kb')
+
+    Returns:
+        Dictionary mapping variant_id to predictions
+    """
+    from alphagenome.models import dna_client
+    from alphagenome.models.dna_output import OutputType
+    from alphagenome.data import genome
+
+    log("Connecting to AlphaGenome API...")
+    client = dna_client.create(api_key=api_key)
+    log("  Connected successfully")
+
+    seq_len = _get_seq_length(seq_length_str)
+    log(f"  Sequence context length: {seq_length_str} ({seq_len:,} bp)")
+
+    requested_outputs = [
+        OutputType.ATAC,
+        OutputType.DNASE,
+        OutputType.CHIP_HISTONE,
+        OutputType.CHIP_TF,
+        OutputType.RNA_SEQ,
+    ]
+    log(f"  Requesting output types: {[o.name for o in requested_outputs]}")
+    log(f"  Batch size: {batch_size}, Max workers: {max_workers}")
+
+    # Start with existing predictions from checkpoint if resuming
+    predictions = checkpoint.predictions.copy() if resume else {}
+    already_processed = set(checkpoint.data['processed_variants']) if resume else set()
+    total = len(variants_df)
+
+    # Filter out already-processed variants
+    remaining_indices = []
+    for i, (_, row) in enumerate(variants_df.iterrows()):
+        if row['variant_id'] not in already_processed:
+            remaining_indices.append(i)
+
+    log(f"\nTotal variants in chunk: {total}")
+    if resume and len(predictions) > 0:
+        log(f"  Loaded {len(predictions)} predictions from checkpoint")
+    log(f"  Remaining to process: {len(remaining_indices)}")
+
+    # Process in batches
+    n_batches = (len(remaining_indices) + batch_size - 1) // batch_size
+    log(f"  Will process in {n_batches} batches of up to {batch_size}")
+
+    variants_processed_since_checkpoint = 0
+
+    for batch_num in range(n_batches):
+        batch_start = batch_num * batch_size
+        batch_end = min(batch_start + batch_size, len(remaining_indices))
+        batch_indices = remaining_indices[batch_start:batch_end]
+
+        batch_rows = variants_df.iloc[batch_indices]
+        batch_variant_ids = batch_rows['variant_id'].tolist()
+
+        log(f"\n  Batch {batch_num + 1}/{n_batches} ({len(batch_indices)} variants)")
+
+        # Build Variant and Interval objects for the batch
+        variant_objects = []
+        interval_objects = []
+        for _, row in batch_rows.iterrows():
+            chrom = row['chrom']
+            pos = int(row['pos'])
+            ref = row['ref']
+            alt = row['alt']
+
+            variant_objects.append(genome.Variant(
+                chromosome=chrom,
+                position=pos,
+                reference_bases=ref,
+                alternate_bases=alt,
+            ))
+
+            interval_start = max(0, pos - seq_len // 2)
+            interval_end = interval_start + seq_len
+            interval_objects.append(genome.Interval(chrom, interval_start, interval_end))
+
+        # Call batch API with exponential backoff retry
+        backoff = INITIAL_BACKOFF
+        results = None
+        for attempt in range(MAX_RETRIES):
+            try:
+                results = client.predict_variants(
+                    intervals=interval_objects,
+                    variants=variant_objects,
+                    requested_outputs=requested_outputs,
+                    ontology_terms=None,
+                    max_workers=max_workers,
+                )
+                break  # Success
+            except Exception as e:
+                error_msg = str(e)
+                if 'RESOURCE_EXHAUSTED' in error_msg and attempt < MAX_RETRIES - 1:
+                    log(f"    Rate limited on batch, waiting {backoff:.1f}s (attempt {attempt + 1}/{MAX_RETRIES})...")
+                    time.sleep(backoff)
+                    backoff *= 2
+                else:
+                    log(f"    ERROR on batch (attempt {attempt + 1}/{MAX_RETRIES}): {error_msg[:150]}")
+                    if attempt == MAX_RETRIES - 1:
+                        # Record errors for all variants in batch
+                        for vid in batch_variant_ids:
+                            checkpoint.add_error(vid, f"Batch failed: {error_msg[:200]}")
+
+        # Process batch results
+        if results is not None:
+            for j, (variant_output, vid) in enumerate(zip(results, batch_variant_ids)):
+                try:
+                    pred = process_variant_output(variant_output, filter_immune=True)
+                    predictions[vid] = pred
+                    checkpoint.mark_processed(vid, batch_indices[j], pred)
+                except Exception as e:
+                    checkpoint.add_error(vid, str(e))
+                    checkpoint.mark_processed(vid, batch_indices[j], None)
+                    log(f"    Error processing {vid}: {str(e)[:100]}")
+
+            n_tracks_avg = np.mean([
+                len(predictions[vid].get('tracks', {}))
+                for vid in batch_variant_ids if vid in predictions
+            ]) if any(vid in predictions for vid in batch_variant_ids) else 0
+            log(f"    Got results for {len(results)} variants (avg {n_tracks_avg:.0f} immune tracks)")
+        else:
+            # Mark all as processed even on failure so we don't retry forever
+            for j, vid in enumerate(batch_variant_ids):
+                checkpoint.mark_processed(vid, batch_indices[j], None)
+
+        variants_processed_since_checkpoint += len(batch_indices)
+
+        # Checkpoint after each batch
+        if variants_processed_since_checkpoint >= CHECKPOINT_INTERVAL:
+            checkpoint.save()
+            checkpoint.save_predictions()
+            log(f"    Checkpoint saved ({len(predictions)} total predictions)")
+            variants_processed_since_checkpoint = 0
+
+            # Save intermediate h5ad periodically
+            if output_dir and len(predictions) % 1000 < batch_size:
+                intermediate_path = output_dir / 'alphagenome_predictions_intermediate.h5ad'
+                try:
+                    save_predictions_h5ad(variants_df, predictions, intermediate_path)
+                    log(f"    Intermediate h5ad saved ({len(predictions)} variants)")
+                except Exception as e:
+                    log(f"    Warning: Could not save intermediate h5ad: {e}")
+
+    # Final save
+    checkpoint.save()
+    checkpoint.save_predictions()
+    return predictions
+
+
 def run_mock_predictions(variants_df: pd.DataFrame) -> Dict[str, Dict]:
     """
     Generate mock predictions for testing when AlphaGenome is unavailable.
@@ -539,6 +730,18 @@ def main():
                        help='AlphaGenome API key (or set ALPHAGENOME_API_KEY env var)')
     parser.add_argument('--reset', action='store_true',
                        help='Reset checkpoint and start fresh')
+    # Batch / chunking arguments
+    parser.add_argument('--chunk-index', type=int, default=None,
+                       help='Which chunk this job processes (0-based, maps to SLURM_ARRAY_TASK_ID)')
+    parser.add_argument('--num-chunks', type=int, default=None,
+                       help='Total number of parallel chunks')
+    parser.add_argument('--max-workers', type=int, default=5,
+                       help='Concurrent API workers for predict_variants() (default: 5)')
+    parser.add_argument('--batch-size', type=int, default=50,
+                       help='Number of variants per batch call (default: 50)')
+    parser.add_argument('--seq-length', type=str, default='100kb',
+                       choices=['1mb', '100kb', '16kb'],
+                       help='Sequence context length (default: 100kb)')
     args = parser.parse_args()
 
     log("=" * 60)
@@ -567,20 +770,38 @@ def main():
         variants_df = variants_df.head(args.max_variants)
         log(f"  Limited to {len(variants_df)} variants for testing")
 
+    # Chunking: split variants across parallel jobs
+    chunk_index = args.chunk_index
+    num_chunks = args.num_chunks
+
+    if chunk_index is not None and num_chunks is not None:
+        total_variants = len(variants_df)
+        chunk_size = (total_variants + num_chunks - 1) // num_chunks
+        start = chunk_index * chunk_size
+        end = min(start + chunk_size, total_variants)
+        variants_df = variants_df.iloc[start:end].reset_index(drop=True)
+        log(f"\n  Chunk {chunk_index}/{num_chunks}: variants [{start}:{end}) = {len(variants_df)} variants")
+        chunk_suffix = f"_chunk{chunk_index}"
+    elif chunk_index is not None or num_chunks is not None:
+        log("ERROR: --chunk-index and --num-chunks must both be provided")
+        sys.exit(1)
+    else:
+        chunk_suffix = ""
+
     # Show cohort breakdown
     log("\nVariants by cohort:")
     for cohort, count in variants_df['cohort'].value_counts().items():
         log(f"  {cohort}: {count:,}")
 
-    # Initialize checkpoint
-    checkpoint_path = RESULTS_DIR / 'alphagenome_checkpoint.json'
+    # Initialize checkpoint (chunk-specific paths)
+    checkpoint_path = RESULTS_DIR / f'checkpoint{chunk_suffix}.json'
 
     # Handle reset
     if args.reset:
         log("\nResetting checkpoint (starting fresh)...")
         if checkpoint_path.exists():
             checkpoint_path.unlink()
-        predictions_ckpt = RESULTS_DIR / 'alphagenome_predictions_checkpoint.json'
+        predictions_ckpt = checkpoint_path.parent / f'predictions{chunk_suffix}_checkpoint.json'
         if predictions_ckpt.exists():
             predictions_ckpt.unlink()
         log("  Checkpoint files removed")
@@ -600,10 +821,13 @@ def main():
     if args.mock:
         predictions = run_mock_predictions(variants_df)
     elif api_key:
-        log(f"\nUsing AlphaGenome API...")
+        log(f"\nUsing AlphaGenome API (batch mode)...")
         try:
-            predictions = run_real_predictions(
-                variants_df, checkpoint, api_key, args.resume, RESULTS_DIR
+            predictions = run_batch_predictions(
+                variants_df, checkpoint, api_key, args.resume, RESULTS_DIR,
+                max_workers=args.max_workers,
+                batch_size=args.batch_size,
+                seq_length_str=args.seq_length,
             )
         except Exception as e:
             log(f"\nERROR with AlphaGenome API: {e}")
@@ -617,9 +841,16 @@ def main():
 
     log(f"\nCompleted predictions for {len(predictions)} variants")
 
-    # Save predictions to h5ad
-    output_path = RESULTS_DIR / 'alphagenome_predictions.h5ad'
-    save_predictions_h5ad(variants_df, predictions, output_path)
+    # Save predictions JSON (chunk-specific)
+    predictions_path = RESULTS_DIR / f'predictions{chunk_suffix}.json'
+    with open(predictions_path, 'w') as f:
+        json.dump(predictions, f)
+    log(f"  Saved predictions JSON: {predictions_path}")
+
+    # If not chunked, also save the unified h5ad directly
+    if not chunk_suffix:
+        output_path = RESULTS_DIR / 'alphagenome_predictions.h5ad'
+        save_predictions_h5ad(variants_df, predictions, output_path)
 
     # Update checkpoint with completion info
     checkpoint.data['completed'] = True
@@ -632,12 +863,15 @@ def main():
     log("=" * 60)
     log(f"  Predictions: {len(predictions)}")
     log(f"  Errors: {len(checkpoint.data['errors'])}")
-    log(f"  Output: {output_path}")
+    log(f"  Output: {predictions_path}")
 
-    # Next steps
-    log("\nNext steps:")
-    log("  1. Run 03_validate_eqtl.py to validate against DICE/GTEx/CIMA")
-    log("  2. Run 04_prioritize_variants.py to compute priority scores")
+    if chunk_suffix:
+        log("\nNext steps:")
+        log("  1. Run all chunks, then run 05_merge_predictions.py")
+    else:
+        log("\nNext steps:")
+        log("  1. Run 03_validate_eqtl.py to validate against DICE/GTEx/CIMA")
+        log("  2. Run 04_prioritize_variants.py to compute priority scores")
 
 
 if __name__ == '__main__':
