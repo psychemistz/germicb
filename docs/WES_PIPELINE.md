@@ -274,11 +274,18 @@ Phenotype and covariate files prepared from clinical data:
 
 **Output:** `5plink/input_data/snps.bed`, `.bim`, `.fam`
 
-## Stage 6a: Logistic Regression (Treatment Response)
+## Stage 6: Association Analysis
+
+The choice of association method depends on the outcome type available for each cohort:
+- **Stage 6a (logis_batch):** Cohorts with discrete binary response (responder/non-responder)
+- **Stage 6b (rank-sum) / ridge:** Cohorts with continuous outcomes (e.g., RECIST measurements, tumor burden) where binary classification is not appropriate
+
+### Stage 6a: Logistic Regression (Treatment Response)
 
 **Tool:** logis_batch (custom C++, Peng Jiang 2014, data2intelligence/data_significance)
 
 **Model:** `logit(Response) ~ Age + Gender + SNP_i` with Firth bias correction
+**Used for:** Cohorts with discrete binary outcome (responder vs non-responder)
 
 ```
 logis_batch \
@@ -305,14 +312,15 @@ logis_batch \
 
 **Output:** `6logis_batch/output/fin_tbl.txt` (SNP, gene, beta, SE, zscore, pvalue)
 
-## Stage 6b: Wilcoxon Rank-Sum Test
+### Stage 6b: Wilcoxon Rank-Sum Test
 
 **Tool:** R (Wilcoxon rank-sum / Mann-Whitney U)
 
-Available for selected cohorts (GBM, mGC, mRCC, PanCancer). Non-parametric
-alternative to logistic regression when distributional assumptions are violated.
+**Used for:** Cohorts with continuous outcomes where logistic regression on a binary
+endpoint is not applicable (GBM, mGC, mRCC, PanCancer).
 
-**MAF filter:** `rowSums(gt==2) >= ceil(N/4)` (more aggressive than logis_batch)
+**MAF filter:** `rowSums(gt==2) >= ceil(N/4)` (more aggressive than logis_batch;
+appropriate since rank-sum has less power and benefits from higher MAF)
 
 **Output:** `6wilcox/output/fin_tbl.txt`
 
@@ -402,13 +410,16 @@ p < 0.001 stringent in the 4germicb pipeline).
 
 Same issue as Stage 6a. OS and PFS analyses report raw p-values.
 
-### 3. Inconsistent MAF filters across association methods
+### 3. Different MAF filters across association methods
 
 - **logis_batch (Stage 6a):** `max(5, ceil(N/10))` — moderately stringent
-- **Wilcoxon rank-sum (Stage 6b):** `ceil(N/4)` — much more aggressive filter
+- **Wilcoxon rank-sum (Stage 6b):** `ceil(N/4)` — more aggressive filter
 
-For a cohort of N=40, logis_batch requires 5 carriers while rank-sum requires 10.
-This means different variant sets are tested by different methods.
+These methods are applied to different cohorts based on outcome type (discrete vs
+continuous), not as alternative analyses on the same data. The stricter rank-sum
+filter is appropriate because the non-parametric test has less statistical power
+and benefits from higher MAF variants. For a cohort of N=40, logis_batch requires
+5 carriers while rank-sum requires 10.
 
 ### 4. Inconsistent variant_id formats across 4germicb scripts
 
