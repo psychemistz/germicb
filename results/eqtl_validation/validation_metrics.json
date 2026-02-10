@@ -1,0 +1,51 @@
+{
+  "validation": {
+    "dice": {
+      "n_matched": 3546,
+      "direction_concordance": 0.48646362098138746,
+      "spearman_r": -0.020582313336000392,
+      "spearman_pval": 0.22044735610777214
+    },
+    "onek1k": {
+      "n_matched": 3,
+      "direction_concordance": 0.6666666666666666,
+      "spearman_r": 0.5,
+      "spearman_pval": 0.6666666666666667
+    },
+    "overall": {
+      "total_variants": 15918,
+      "any_eqtl_matched": 3548,
+      "both_matched": 1,
+      "dice_only": 3545,
+      "onek1k_only": 2
+    }
+  },
+  "cohort_sanity_check": {
+    "cohort_vs_dice": {
+      "n_matched": 16,
+      "direction_concordance": 0.5,
+      "spearman_r": -0.022304986837273527,
+      "spearman_pval": 0.9346530502399932,
+      "per_cohort": {}
+    },
+    "cohort_vs_onek1k": {
+      "n_matched": 4,
+      "direction_concordance": 1.0,
+      "spearman_r": -1.0,
+      "spearman_pval": 0.0,
+      "per_cohort": {}
+    },
+    "cohort_vs_alphagenome": {
+      "n_matched": 548,
+      "ag_column_used": "ag_Whole_Blood",
+      "direction_concordance": 0.021897810218978103,
+      "spearman_r": 0.10852274090904375,
+      "spearman_pval": 0.011016871503289288
+    },
+    "summary": {
+      "total_cohort_eqtl_positions": 10766,
+      "total_cohort_eqtl_records": 75435,
+      "n_cohorts": 10
+    }
+  }
+}
