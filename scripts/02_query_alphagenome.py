@@ -37,210 +37,23 @@ import json
 import time
 import argparse
 from pathlib import Path
-from datetime import datetime
-from typing import Optional, Dict, Any, List
+from typing import Dict, Any
+
+# Ensure project root is on sys.path for lib imports
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
 import pandas as pd
 import anndata as ad
 
-# ==============================================================================
-# Configuration
-# ==============================================================================
-
-PROJECT_DIR = Path('/data/parks34/projects/4germicb')
-DATA_DIR = PROJECT_DIR / 'data'
-RESULTS_DIR = PROJECT_DIR / 'results' / 'alphagenome'
-
-# Rate limiting
-CHECKPOINT_INTERVAL = 100
-MAX_RETRIES = 5
-INITIAL_BACKOFF = 1.0  # seconds
-
-# Immune-relevant track patterns (case-insensitive matching)
-IMMUNE_TRACK_PATTERNS = [
-    'gm12878',      # B-lymphoblastoid cell line
-    'pbmc',         # Peripheral blood mononuclear cells
-    'cd4',          # CD4+ T cells
-    'cd8',          # CD8+ T cells
-    'b_cell', 'bcell', 'b-cell',  # B cells
-    't_cell', 'tcell', 't-cell',  # T cells
-    'monocyte',     # Monocytes
-    'macrophage',   # Macrophages
-    'dendritic',    # Dendritic cells
-    'nk_cell', 'nkcell', 'nk-cell',  # NK cells
-    'lymphocyte',   # Lymphocytes
-    'leukocyte',    # Leukocytes
-    'immune',       # Generic immune
-    'blood',        # Blood-related
-    'hematopoietic', 'hsc',  # Hematopoietic stem cells
-    'spleen',       # Spleen
-    'thymus',       # Thymus
-    'bone_marrow', 'bone-marrow',  # Bone marrow
-    'cd34',         # CD34+ progenitors
-]
-
-
-def log(msg: str):
-    """Print timestamped log message."""
-    print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
-
-
-class CheckpointManager:
-    """Manage checkpoints for resumable processing with prediction storage."""
-
-    def __init__(self, checkpoint_path: Path):
-        self.checkpoint_path = checkpoint_path
-        # Derive predictions checkpoint path from the checkpoint filename
-        stem = checkpoint_path.stem  # e.g. 'checkpoint_chunk0' or 'checkpoint'
-        self.predictions_path = checkpoint_path.parent / f'{stem}_predictions.json'
-        self.data = self.load()
-        self.predictions = self.load_predictions()
-
-    def load(self) -> Dict[str, Any]:
-        """Load checkpoint from disk."""
-        if self.checkpoint_path.exists():
-            with open(self.checkpoint_path, 'r') as f:
-                return json.load(f)
-        return {
-            'processed_variants': [],
-            'last_index': -1,
-            'start_time': datetime.now().isoformat(),
-            'errors': [],
-        }
-
-    def load_predictions(self) -> Dict[str, Dict]:
-        """Load predictions from separate file."""
-        if self.predictions_path.exists():
-            try:
-                with open(self.predictions_path, 'r') as f:
-                    return json.load(f)
-            except Exception as e:
-                log(f"  Warning: Could not load predictions checkpoint: {e}")
-        return {}
-
-    def save(self):
-        """Save checkpoint to disk."""
-        self.data['last_updated'] = datetime.now().isoformat()
-        self.data['n_predictions'] = len(self.predictions)
-        with open(self.checkpoint_path, 'w') as f:
-            json.dump(self.data, f, indent=2)
-
-    def save_predictions(self):
-        """Save predictions to separate file."""
-        with open(self.predictions_path, 'w') as f:
-            json.dump(self.predictions, f)
-        log(f"  Predictions checkpoint saved ({len(self.predictions)} variants)")
-
-    def is_processed(self, variant_id: str) -> bool:
-        """Check if variant has been processed."""
-        return variant_id in self.data['processed_variants']
-
-    def mark_processed(self, variant_id: str, index: int, prediction: Dict = None):
-        """Mark variant as processed and store prediction."""
-        self.data['processed_variants'].append(variant_id)
-        self.data['last_index'] = index
-        if prediction is not None:
-            self.predictions[variant_id] = prediction
-
-    def add_error(self, variant_id: str, error: str):
-        """Record an error."""
-        self.data['errors'].append({
-            'variant_id': variant_id,
-            'error': error,
-            'timestamp': datetime.now().isoformat()
-        })
-
-
-def is_immune_track(track_name: str) -> bool:
-    """Check if track name matches immune-relevant patterns."""
-    track_lower = track_name.lower()
-    return any(pattern in track_lower for pattern in IMMUNE_TRACK_PATTERNS)
-
-
-def process_variant_output(variant_output, filter_immune: bool = True) -> Dict[str, Any]:
-    """
-    Process AlphaGenome VariantOutput to extract track scores.
-
-    Args:
-        variant_output: VariantOutput from AlphaGenome API
-        filter_immune: Whether to filter to immune-relevant tracks only
-
-    Returns:
-        Dictionary with track scores and metadata
-    """
-    from alphagenome.models.dna_output import OutputType
-
-    tracks = {}
-
-    # VariantOutput has reference and alternate Output objects
-    if not hasattr(variant_output, 'reference') or not hasattr(variant_output, 'alternate'):
-        return {'tracks': {}, 'metadata': {'total_tracks': 0, 'significant_tracks': 0}}
-
-    ref_output = variant_output.reference
-    alt_output = variant_output.alternate
-
-    # Process each output type (ATAC, DNASE, CHIP_HISTONE, CHIP_TF, RNA_SEQ)
-    output_types = [
-        ('atac', OutputType.ATAC),
-        ('dnase', OutputType.DNASE),
-        ('chip_histone', OutputType.CHIP_HISTONE),
-        ('chip_tf', OutputType.CHIP_TF),
-        ('rna_seq', OutputType.RNA_SEQ),
-    ]
-
-    for field_name, output_type in output_types:
-        ref_track_data = getattr(ref_output, field_name, None)
-        alt_track_data = getattr(alt_output, field_name, None)
-
-        if ref_track_data is None or alt_track_data is None:
-            continue
-
-        # Get track names from metadata
-        if hasattr(ref_track_data, 'metadata') and 'name' in ref_track_data.metadata.columns:
-            track_names = ref_track_data.metadata['name'].tolist()
-        else:
-            continue
-
-        # Get values (shape: positional_bins x num_tracks)
-        ref_values = ref_track_data.values
-        alt_values = alt_track_data.values
-
-        if ref_values is None or alt_values is None:
-            continue
-
-        # Process each track
-        for i, track_name in enumerate(track_names):
-            # Create full track name with output type prefix
-            full_name = f"{output_type.name}_{track_name}"
-
-            if filter_immune and not is_immune_track(full_name):
-                continue
-
-            try:
-                # Compute mean across positional bins
-                if ref_values.ndim == 1:
-                    ref_score = float(ref_values[i]) if i < len(ref_values) else 0.0
-                    alt_score = float(alt_values[i]) if i < len(alt_values) else 0.0
-                else:
-                    ref_score = float(np.mean(ref_values[:, i]))
-                    alt_score = float(np.mean(alt_values[:, i]))
-
-                tracks[full_name] = {
-                    'ref_score': ref_score,
-                    'alt_score': alt_score,
-                    'diff': alt_score - ref_score,
-                }
-            except Exception:
-                continue
-
-    return {
-        'tracks': tracks,
-        'metadata': {
-            'total_tracks': len(tracks),
-            'significant_tracks': sum(1 for t in tracks.values() if abs(t['diff']) > 0.1),
-        }
-    }
+from lib.config import (
+    DATA_DIR, ALPHAGENOME_DIR as RESULTS_DIR,
+    CHECKPOINT_INTERVAL, MAX_RETRIES, INITIAL_BACKOFF,
+)
+from lib.log import log
+from lib.variants import prepare_variants
+from lib.checkpoint import CheckpointManager
+from lib.alphagenome import process_variant_output
 
 
 def run_real_predictions(
@@ -683,37 +496,6 @@ def save_predictions_h5ad(
 
     adata.write_h5ad(output_path, compression='gzip')
     log(f"  Saved: {output_path}")
-
-
-def prepare_variants(variants_df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Prepare variants DataFrame for AlphaGenome processing.
-
-    Standardizes column names and creates variant_id.
-    Drops rows with missing coordinates.
-    """
-    df = variants_df.copy()
-
-    # Drop rows with missing essential columns
-    required_cols = ['chrom', 'pos', 'ref', 'alt']
-    n_before = len(df)
-    df = df.dropna(subset=required_cols)
-    n_dropped = n_before - len(df)
-    if n_dropped > 0:
-        log(f"  Dropped {n_dropped} variants with missing coordinates")
-
-    # Convert pos to int
-    df['pos'] = df['pos'].astype(int)
-
-    # Ensure chromosome format is correct (with 'chr' prefix)
-    if len(df) > 0 and not str(df['chrom'].iloc[0]).startswith('chr'):
-        df['chrom'] = 'chr' + df['chrom'].astype(str)
-
-    # Create variant_id if not present
-    if 'variant_id' not in df.columns:
-        df['variant_id'] = df['chrom'].astype(str) + ':' + df['pos'].astype(str) + '_' + df['ref'] + '>' + df['alt']
-
-    return df
 
 
 def main():

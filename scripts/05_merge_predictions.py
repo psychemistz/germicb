@@ -18,34 +18,35 @@ Usage:
   python scripts/05_merge_predictions.py --num-chunks 10
 """
 
+import sys
 import json
 import argparse
 from pathlib import Path
 
+# Ensure project root is on sys.path for lib imports
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 import pandas as pd
 
-# Reuse functions from the query script
+from lib.config import DATA_DIR, ALPHAGENOME_DIR as RESULTS_DIR
+from lib.log import log
+from lib.variants import prepare_variants
+
+# Import the h5ad saver from 02_query_alphagenome
 from importlib.util import spec_from_file_location, module_from_spec
 
-# ==============================================================================
-# Configuration
-# ==============================================================================
-
-PROJECT_DIR = Path('/data/parks34/projects/4germicb')
-DATA_DIR = PROJECT_DIR / 'data'
-RESULTS_DIR = PROJECT_DIR / 'results' / 'alphagenome'
-SCRIPTS_DIR = PROJECT_DIR / 'scripts'
+SCRIPTS_DIR = Path(__file__).resolve().parent
 
 
-def load_query_module():
-    """Import save_predictions_h5ad and prepare_variants from 02_query_alphagenome.py."""
+def load_save_function():
+    """Import save_predictions_h5ad from 02_query_alphagenome.py."""
     spec = spec_from_file_location(
         'query_alphagenome',
         SCRIPTS_DIR / '02_query_alphagenome.py',
     )
     mod = module_from_spec(spec)
     spec.loader.exec_module(mod)
-    return mod
+    return mod.save_predictions_h5ad
 
 
 def main():
@@ -56,8 +57,7 @@ def main():
                        help='Expected number of chunks (auto-detected if not set)')
     args = parser.parse_args()
 
-    query_mod = load_query_module()
-    log = query_mod.log
+    save_predictions_h5ad = load_save_function()
 
     log("=" * 60)
     log("MERGE CHUNKED ALPHAGENOME PREDICTIONS")
@@ -71,7 +71,7 @@ def main():
 
     log(f"\nLoading variants: {input_csv}")
     variants_df = pd.read_csv(input_csv)
-    variants_df = query_mod.prepare_variants(variants_df)
+    variants_df = prepare_variants(variants_df)
     log(f"  Total variants: {len(variants_df):,}")
 
     # Discover chunk files
@@ -126,7 +126,7 @@ def main():
 
     # Save unified h5ad
     output_path = RESULTS_DIR / 'alphagenome_predictions.h5ad'
-    query_mod.save_predictions_h5ad(variants_df, merged, output_path)
+    save_predictions_h5ad(variants_df, merged, output_path)
 
     # Summary
     log("\n" + "=" * 60)

@@ -19,22 +19,13 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
+# Ensure project root is on sys.path for lib imports
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 import pandas as pd
 import numpy as np
 
-# ==============================================================================
-# Configuration
-# ==============================================================================
-
-WES_DIR = Path('/data/parks34/projects/project_outdated/WES_ImmunoPredict/FINISHED')
-OUTPUT_DIR = Path('/data/parks34/projects/4germicb/data')
-
-# P-value thresholds
-PVAL_SUGGESTIVE = 0.05
-PVAL_STRINGENT = 0.001
-
-# Directories to skip (not cohort directories)
-SKIP_DIRS = {'summary_all', 'logis_batch', 'ridge', 'Transcriptome', 'DNAFormer', 'geneformer'}
+from lib.config import WES_DIR, DATA_DIR as OUTPUT_DIR, PVAL_SUGGESTIVE, PVAL_STRINGENT, SKIP_DIRS
 
 
 def get_cohort_dirs() -> List[Path]:

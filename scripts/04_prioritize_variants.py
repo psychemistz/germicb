@@ -23,35 +23,24 @@ Output:
 - results/prioritized/prioritization_report.md
 """
 
-import os
 import sys
-import json
 import time
 import argparse
 from pathlib import Path
-from typing import Dict, List, Optional
+
+# Ensure project root is on sys.path for lib imports
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
 import pandas as pd
-from scipy import stats
 
-# ==============================================================================
-# Configuration
-# ==============================================================================
-
-PROJECT_DIR = Path('/data/parks34/projects/4germicb')
-INPUT_DIR = PROJECT_DIR / 'results' / 'eqtl_validation'
-OUTPUT_DIR = PROJECT_DIR / 'results' / 'prioritized'
-
-# Priority score thresholds
-ALPHAGENOME_HIGH_THRESHOLD = 0.5      # Impact score for "high" prediction
-ALPHAGENOME_MEDIUM_THRESHOLD = 0.2    # Impact score for "medium" prediction
-PVAL_STRINGENT = 0.001                # Stringent p-value threshold
-
-
-def log(msg: str):
-    """Print timestamped log message."""
-    print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
+from lib.config import (
+    EQTL_VALIDATION_DIR as INPUT_DIR,
+    PRIORITIZED_DIR as OUTPUT_DIR,
+    ALPHAGENOME_HIGH_THRESHOLD,
+    ALPHAGENOME_MEDIUM_THRESHOLD,
+)
+from lib.log import log
 
 
 def compute_priority_score(row: pd.Series) -> float:
@@ -62,13 +51,9 @@ def compute_priority_score(row: pd.Series) -> float:
     - therapy_score: -log10(pval), capped at 10
     - alphagenome_score: normalized impact score (0-3)
     - eqtl_score: bonus for eQTL validation (0-2)
-
-    Returns:
-        Priority score (higher = higher priority)
     """
     score = 0.0
 
-    # Therapy association score (-log10 p-value, capped)
     pval = row.get('pval', 1)
     if pval > 0:
         therapy_score = min(-np.log10(pval), 10)
@@ -76,7 +61,6 @@ def compute_priority_score(row: pd.Series) -> float:
         therapy_score = 10
     score += therapy_score
 
-    # AlphaGenome impact score
     ag_impact = row.get('alphagenome_impact_mean', 0)
     if ag_impact >= ALPHAGENOME_HIGH_THRESHOLD:
         score += 3
@@ -85,7 +69,6 @@ def compute_priority_score(row: pd.Series) -> float:
     elif ag_impact > 0:
         score += 1
 
-    # eQTL validation bonus
     if row.get('dice_matched', False):
         score += 2
     if row.get('onek1k_matched', False):
@@ -99,7 +82,7 @@ def assign_tier(row: pd.Series) -> int:
     Assign evidence tier based on available evidence.
 
     Tiers:
-    - 1: Therapy + AlphaGenome (high) + eQTL validated
+    - 1: Therapy + AlphaGenome (high/medium) + eQTL validated
     - 2: Therapy + AlphaGenome (high/medium) only
     - 3: Therapy + eQTL validated (low/no AlphaGenome)
     - 4: Therapy only
@@ -123,11 +106,8 @@ def generate_report(df: pd.DataFrame, output_path: Path):
     log(f"Generating report: {output_path}")
 
     n_total = len(df)
-
-    # Tier counts
     tier_counts = df['tier'].value_counts().sort_index()
 
-    # Cohort breakdown
     cohort_summary = df.groupby('cohort').agg({
         'tier': lambda x: (x == 1).sum(),
         'priority_score': 'mean',
@@ -182,7 +162,6 @@ These variants have the strongest evidence: therapy association + AlphaGenome pr
         onek1k_gene = str(row.get('onek1k_gene', ''))[:12] if pd.notna(row.get('onek1k_gene', '')) else '-'
         report += f"| {row['rsid']} | {row['gene']} | {row['cohort'][:20]} | {row['pval']:.2e} | {row['alphagenome_impact_mean']:.3f} | {dice_gene} | {onek1k_gene} | {row['priority_score']:.1f} |\n"
 
-    # Top variants by cohort
     report += """
 
 ## Top Variants by Cohort
@@ -200,7 +179,7 @@ These variants have the strongest evidence: therapy association + AlphaGenome pr
         for _, row in top5.iterrows():
             report += f"| {row['rsid']} | {row['gene']} | {row['pval']:.2e} | {row['alphagenome_impact_mean']:.3f} | {row['tier']} | {row['priority_score']:.1f} |\n"
 
-    # Meta-analysis candidates (variants in multiple cohorts)
+    # Cross-cohort variants
     report += """
 
 ## Cross-Cohort Variants
@@ -209,12 +188,10 @@ Variants appearing in multiple cohorts with Tier 1 or 2 evidence:
 
 """
 
-    # Find variants by position appearing in multiple cohorts
     df['pos_id'] = df['chrom'] + ':' + df['pos'].astype(str)
     multi_cohort = df.groupby('pos_id').filter(lambda x: len(x) > 1)
 
     if len(multi_cohort) > 0:
-        # Get top by mean priority across cohorts
         mc_summary = multi_cohort.groupby('pos_id').agg({
             'rsid': 'first',
             'gene': 'first',
@@ -266,10 +243,8 @@ def main():
     log("VARIANT PRIORITIZATION: IMMUNOTHERAPY COHORTS")
     log("=" * 60)
 
-    # Create output directory
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Load validated variants
     input_path = Path(args.input) if args.input else INPUT_DIR / 'eqtl_matched.csv'
     log(f"\nLoading variants: {input_path}")
 
@@ -283,27 +258,23 @@ def main():
 
     log(f"  Score range: {df['priority_score'].min():.1f} to {df['priority_score'].max():.1f}")
 
-    # Tier breakdown
     log("\nTier breakdown:")
     for tier in [1, 2, 3, 4]:
         n = (df['tier'] == tier).sum()
         log(f"  Tier {tier}: {n:,} ({100*n/len(df):.1f}%)")
 
-    # Sort by priority
     df = df.sort_values('priority_score', ascending=False)
 
-    # Save prioritized variants
+    # Save results
     output_csv = OUTPUT_DIR / 'prioritized_variants.csv'
     df.to_csv(output_csv, index=False)
     log(f"\nSaved: {output_csv}")
 
-    # Save tier summary
     tier_summary = df.groupby(['cohort', 'tier']).size().unstack(fill_value=0)
     tier_summary_path = OUTPUT_DIR / 'tier_summary.csv'
     tier_summary.to_csv(tier_summary_path)
     log(f"Saved: {tier_summary_path}")
 
-    # Generate report
     report_path = OUTPUT_DIR / 'prioritization_report.md'
     generate_report(df, report_path)
     log(f"Saved: {report_path}")
@@ -313,7 +284,6 @@ def main():
     log("COMPLETE")
     log("=" * 60)
 
-    # Show top 10 variants
     log("\nTop 10 prioritized variants:")
     log("-" * 80)
     top10 = df.head(10)
