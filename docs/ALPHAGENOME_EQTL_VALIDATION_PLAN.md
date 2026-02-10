@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-This document outlines a validated approach for prioritizing germline variants associated with immunotherapy outcomes using AlphaGenome predictions and large-scale immune cell eQTL databases (CIMA, DICE, GTEx).
+This document outlines a validated approach for prioritizing germline variants associated with immunotherapy outcomes using AlphaGenome predictions and large-scale immune cell eQTL databases (CIMA, DICE, OneK1K). GTEx is excluded from validation because AlphaGenome is trained on GTEx RNA-seq data (circularity).
 
 **Key Insight from Cytokine Atlas Project (2026-02-05):** AlphaGenome is most effective for predicting regulatory effects of variants with **unknown** effects, NOT for prioritizing variants that already have measured eQTL data. For immunotherapy-associated germline variants from WES, this is an **ideal use case**.
 
@@ -27,9 +27,10 @@ This document outlines a validated approach for prioritizing germline variants a
 
 2. **Direct eQTL validation achieves high concordance**:
    - CIMA vs DICE: 83.5% concordance (r=0.685)
-   - CIMA vs GTEx: 68.9% concordance (r=0.370)
+   - CIMA vs GTEx: 68.9% concordance (r=0.370) — however, GTEx concordance is circular with AlphaGenome training data and is excluded from the main study
 
 3. **DICE provides best immune cell validation** (cell-type-specific > bulk tissue)
+   - **OneK1K** adds single-cell resolution across 14 PBMC cell types (also independent of AlphaGenome)
 
 4. **Genome build matters**: DICE is hg19, must liftover to hg38
 
@@ -64,8 +65,9 @@ cohort/
 | Database | Cell Types | N eQTLs | Genome Build | Location |
 |----------|------------|---------|--------------|----------|
 | **CIMA** | 69 immune subtypes | 48,627 (cytokine genes) | hg38 | `/data/Jiang_Lab/Data/Seongyong/CIMA/xQTL/` |
-| **DICE** | 12 immune cell types | 3,706,208 | hg19 → **hg38 lifted** | `results/alphagenome/dice_data/hg38/` |
-| **GTEx v10** | Whole blood, spleen, lymphocytes | 2,985,690 | hg38 | `results/alphagenome/gtex_data/` |
+| **DICE** | 12 immune cell types | 3,706,208 | hg19 → **hg38 lifted** | `data/eqtl_references/dice/hg38/` |
+| **OneK1K** | 14 PBMC cell types | sc-eQTLs | hg38 | `data/eqtl_references/oneK1K/` |
+| ~~GTEx v10~~ | ~~Whole blood, spleen, lymphocytes~~ | ~~2,985,690~~ | ~~hg38~~ | *Excluded — circular with AlphaGenome training* |
 
 ---
 
@@ -110,11 +112,14 @@ For each variant with AlphaGenome predictions:
        - If match: variant IS a known immune cell eQTL
        - Record: dice_beta, dice_pval, dice_celltype
 
-    2. Match to GTEx eQTLs (by position)
-       - Record: gtex_slope, gtex_pval
+    2. Match to OneK1K sc-eQTLs (by hg38 position)
+       - If match: variant IS a known PBMC sc-eQTL
+       - Record: onek1k_beta, onek1k_pval, onek1k_celltype
 
     3. Match to CIMA eQTLs (if cytokine/secreted protein gene)
        - Record: cima_beta, cima_pval, cima_celltype
+
+    Note: GTEx matching excluded — AlphaGenome trained on GTEx RNA-seq data (circular)
 ```
 
 ### Phase 4: Prioritization Scoring
@@ -124,7 +129,7 @@ For each variant with AlphaGenome predictions:
 priority_score = (
     therapy_association_score +      # -log10(p) from logistic/survival
     alphagenome_impact_score +       # Predicted regulatory effect
-    eqtl_validation_score            # Bonus if validated in DICE/GTEx
+    eqtl_validation_score            # Bonus if validated in DICE/OneK1K
 )
 
 # Tier assignment
@@ -143,7 +148,7 @@ Tier 4: Therapy-associated only
 | Comparison | Expected Matches | Expected Concordance |
 |------------|------------------|----------------------|
 | AlphaGenome-predicted → DICE | ~30-40% of variants | 70-80% direction match |
-| AlphaGenome-predicted → GTEx | ~20-30% of variants | 60-70% direction match |
+| AlphaGenome-predicted → OneK1K | ~25-35% of variants | 65-75% direction match |
 | Therapy-associated → any eQTL | ~10-20% of variants | Variable |
 
 ### Interpretation
@@ -221,15 +226,15 @@ This is the CORRECT use case - predicting effects for unknown variants.
 ```python
 # scripts/03_validate_eqtl.py
 """
-Validate AlphaGenome predictions against DICE, GTEx, CIMA.
-Based on validated approach from cytokine atlas project.
+Validate AlphaGenome predictions against DICE, OneK1K, CIMA.
+GTEx excluded — AlphaGenome trained on GTEx RNA-seq data (circular).
 """
 
 # Load lifted DICE data (hg38)
-DICE_HG38_DIR = Path('/vf/users/parks34/projects/2secactpy/results/alphagenome/dice_data/hg38')
+DICE_HG38_DIR = PROJECT_DIR / 'data' / 'eqtl_references' / 'dice' / 'hg38'
 
-# Load GTEx v10
-GTEX_PATH = '/data/parks34/projects/2secactpy/results/alphagenome/gtex_data/GTEx_Analysis_v10_eQTL_updated/Whole_Blood.v10.eQTLs.signif_pairs.parquet'
+# Load OneK1K sc-eQTLs (hg38)
+ONEK1K_PATH = PROJECT_DIR / 'data' / 'eqtl_references' / 'oneK1K' / 'esnp_table.tsv.gz'
 
 # Match by position (chr:pos)
 def match_to_eqtl(variants_df, eqtl_df):
@@ -270,7 +275,7 @@ def compute_priority_score(row):
     # eQTL validation
     if row['dice_matched']:
         score += 2
-    if row['gtex_matched']:
+    if row['onek1k_matched']:
         score += 1
 
     return score
@@ -284,29 +289,51 @@ def compute_priority_score(row):
 |--------|---------------------------|------------------------------|
 | Input variants | Known eQTLs (measured effects) | Therapy-associated (unknown effects) |
 | AlphaGenome role | Prioritize known effects | **Predict unknown effects** |
-| Validation | Circular (AlphaGenome trained on GTEx) | **Independent** (therapy outcomes) |
+| Validation | Circular (AlphaGenome trained on GTEx) | **Independent** (DICE/OneK1K, not in AlphaGenome training) |
 | Expected value | Low (75% vs 90% naive) | **High** (fills knowledge gap) |
 
 ---
 
-## Files to Create
+## Repository Structure
 
 ```
 /data/parks34/projects/4germicb/
-├── RESEARCH.md                         # Existing planning document
-├── ALPHAGENOME_EQTL_VALIDATION_PLAN.md # This document
+├── CLAUDE.md                           # Project context for AI assistants
+├── docs/
+│   ├── RESEARCH.md                     # Planning document
+│   ├── ALPHAGENOME_EQTL_VALIDATION_PLAN.md  # This document
+│   ├── BENCHMARK_Proposal.md           # Benchmark study feasibility assessment
+│   └── BENCHMARK_Plan.md              # Benchmark study results & analysis
 ├── scripts/
-│   ├── 01_extract_therapy_variants.py
+│   ├── 01_extract_therapy_variants.py  # Main pipeline
 │   ├── 02_query_alphagenome.py
 │   ├── 03_validate_eqtl.py
-│   └── 04_prioritize_variants.py
+│   ├── 04_prioritize_variants.py
+│   ├── 05_merge_predictions.py
+│   ├── benchmark_01_filter_eqtls.py   # Benchmark pipeline
+│   ├── benchmark_02_format_variants.py
+│   ├── benchmark_03_predict.py
+│   ├── benchmark_04_interpret.py
+│   ├── benchmark_05_validate.py
+│   └── slurm/
+│       ├── run_alphagenome_full.sh
+│       ├── run_merge_validate.sh
+│       └── run_benchmark_alphagenome.sh
 ├── data/
 │   ├── therapy_variants_all.csv
-│   └── cohort_metadata.csv
-└── results/
-    ├── alphagenome_predictions.h5ad
-    ├── eqtl_validation.csv
-    └── prioritized_variants.csv
+│   ├── therapy_variants_stringent.csv
+│   ├── cohort_summary.csv
+│   └── eqtl_references/               # Shared eQTL reference data
+│       ├── dice/{hg19,hg38}/
+│       ├── oneK1K/
+│       └── gtex/                    # Retained but excluded from validation (circular)
+├── results/
+│   ├── alphagenome/                    # Main study AlphaGenome predictions
+│   ├── eqtl_validation/               # Main study eQTL matching
+│   ├── prioritized/                    # Main study final output
+│   └── benchmark_alphagenome/          # Benchmark study outputs
+└── logs/
+    └── benchmark/
 ```
 
 ---
@@ -325,9 +352,49 @@ def compute_priority_score(row):
 | Metric | Target |
 |--------|--------|
 | Therapy variants with AlphaGenome predictions | >80% |
-| AlphaGenome-predicted variants matching DICE | 30-40% |
-| Direction concordance (AlphaGenome vs DICE) | >70% |
+| AlphaGenome-predicted variants matching DICE/OneK1K | 30-40% |
+| Direction concordance (AlphaGenome vs DICE/OneK1K) | >70% |
 | Tier 1 variants (therapy + AlphaGenome + eQTL) | 5-10% of input |
+
+---
+
+## Experimental Validation Plan
+
+Top-priority Tier 1 variants will be experimentally validated through CRISPR base editing and adoptive T cell transfer:
+
+### Variant Selection Criteria
+
+Candidates for experimental validation must satisfy all of:
+- **Cell-type specificity**: CD8+ T cell-specific regulatory variant (eQTL in DICE CD8_NAIVE/CD8_STIM or OneK1K CD8 Naive/CD8 TEM)
+- **High AlphaGenome impact**: Above threshold for predicted regulatory effect
+- **Multi-cohort consistency**: Associated with therapy response in >=2 cohorts with consistent effect direction
+- **Tier 1 classification**: Therapy-associated + AlphaGenome-predicted + eQTL-validated
+
+### Phase 1: In Vitro CRISPR Base Editing
+
+1. Select top CD8+ T cell regulatory variants from Tier 1 prioritization
+2. Design CRISPR base editing guides (ABE or CBE) for single-nucleotide substitution at candidate regulatory positions
+3. Perform base editing in primary human CD8+ T cell cultures
+4. Measure anti-cancer effector function:
+   - Cytotoxicity assays (co-culture with tumor cell lines)
+   - Cytokine production (IFN-gamma, TNF-alpha, granzyme B)
+   - Proliferation and exhaustion markers (PD-1, TIM-3, LAG-3)
+5. Compare base-edited T cells vs control (non-targeting guide) T cells
+
+### Phase 2: In Vivo Mouse Model
+
+1. Generate base-edited human T cells targeting top candidate regulatory variant
+2. Adoptive transfer into tumor-bearing immunodeficient mice (NSG or humanized model):
+   - **Treatment arm**: Base-edited T cells + anti-PD-1 checkpoint therapy
+   - **Control arm**: Control T cells + anti-PD-1 checkpoint therapy
+3. Measure immunotherapy-associated survival difference between groups
+4. Assess tumor infiltration, T cell persistence, and effector function in vivo
+
+### Expected Outcome
+
+If the regulatory variant genuinely modulates CD8+ T cell anti-tumor immunity, base-edited T cells should show measurable differences in:
+- In vitro: cytotoxicity and cytokine production
+- In vivo: tumor growth rate and survival under checkpoint immunotherapy
 
 ---
 
@@ -338,8 +405,9 @@ This approach leverages AlphaGenome's true strength: **predicting regulatory eff
 1. **Therapy association** (clinical relevance)
 2. **AlphaGenome predictions** (regulatory potential)
 3. **eQTL validation** (biological evidence)
+4. **Experimental validation** (CRISPR base editing in T cells + mouse model)
 
-We can identify high-confidence regulatory variants driving immunotherapy outcomes across independent cohorts.
+We can identify and functionally validate high-confidence regulatory variants driving immunotherapy outcomes across independent cohorts.
 
 ---
 
@@ -347,6 +415,6 @@ We can identify high-confidence regulatory variants driving immunotherapy outcom
 
 - AlphaGenome: DeepMind, January 2026
 - DICE database: Schmiedel et al., Cell 2018
-- GTEx v10: GTEx Consortium 2022
+- OneK1K: Yazar et al., "Single-cell eQTL mapping identifies cell type-specific genetic control of autoimmune disease", Science 2022
 - CIMA: Single-cell immune atlas eQTLs
-- Cytokine Atlas AlphaGenome Analysis: `/vf/users/parks34/projects/2secactpy/docs/pipelines/alphagenome_plan.md`
+- Cytokine Atlas AlphaGenome Benchmark: `docs/BENCHMARK_Plan.md`

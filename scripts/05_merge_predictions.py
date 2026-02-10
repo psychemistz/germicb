@@ -138,7 +138,7 @@ def main():
     log(f"  Output:            {output_path}")
 
     log("\nNext steps:")
-    log("  1. Run 03_validate_eqtl.py to validate against DICE/GTEx/CIMA")
+    log("  1. Run 03_validate_eqtl.py to validate against DICE/OneK1K")
     log("  2. Run 04_prioritize_variants.py to compute priority scores")
 
 

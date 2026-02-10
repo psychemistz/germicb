@@ -2,18 +2,19 @@
 
 > **UPDATE 2026-02-05**: See `ALPHAGENOME_EQTL_VALIDATION_PLAN.md` for validated implementation approach based on lessons from Cytokine Atlas AlphaGenome analysis. Key insight: AlphaGenome is most effective for variants with **unknown** regulatory effects (ideal for therapy-associated WES variants), NOT for prioritizing variants with known eQTL effects.
 
-## Pipeline Implementation Status (2026-02-05)
+## Pipeline Implementation Status (2026-02-10)
 
 The AlphaGenome + eQTL validation pipeline has been implemented and tested:
 
 | Script | Status | Output |
 |--------|--------|--------|
 | `01_extract_therapy_variants.py` | ✅ Complete | 15,918 variants (p<0.05) from 8 cohorts |
-| `02_query_alphagenome.py` | ✅ Complete (mock) | AlphaGenome predictions for all variants |
-| `03_validate_eqtl.py` | ✅ Complete | 22.3% DICE match, 44.3% GTEx match |
-| `04_prioritize_variants.py` | ✅ Complete | 5,056 Tier 1 variants |
+| `02_query_alphagenome.py` | ✅ Complete | Batch API + SLURM array (200 chunks) |
+| `05_merge_predictions.py` | ⏳ Pending | Merge chunk JSONs → h5ad |
+| `03_validate_eqtl.py` | ✅ Complete (mock) | 22.3% DICE match (GTEx excluded — circular with AlphaGenome training) |
+| `04_prioritize_variants.py` | ✅ Complete (mock) | 5,056 Tier 1 variants |
 
-**Key Results:**
+**Key Results (mock predictions):**
 - **Tier 1** (Therapy + AlphaGenome + eQTL): 5,056 variants (31.8%)
 - **Tier 2** (Therapy + AlphaGenome): 5,332 variants (33.5%)
 - **Tier 3** (Therapy + eQTL): 2,659 variants (16.7%)
@@ -21,7 +22,24 @@ The AlphaGenome + eQTL validation pipeline has been implemented and tested:
 
 **Top candidates by cohort:** See `results/prioritized/prioritization_report.md`
 
-**Next steps:** Replace mock AlphaGenome predictions with real API calls to get accurate regulatory impact scores.
+**Current status:** Real AlphaGenome API predictions running via SLURM array job 11411294 (200 chunks). Once complete, `05_merge_predictions.py` will consolidate, then `03_validate_eqtl.py` + `04_prioritize_variants.py` will re-run with real scores.
+
+## Benchmark Study: AlphaGenome on Known eQTLs (scripts/benchmark_01-05)
+
+A preliminary feasibility study tested whether AlphaGenome could prioritize known regulatory variants (CIMA single-cell immune eQTLs, 29,816 unique variants). This study was originally conducted in the `2cytoatlas` project and has been reorganized into this repository under `scripts/benchmark_*.py` with results in `results/benchmark_alphagenome/`.
+
+**Key finding:** Direct eQTL-to-eQTL concordance (CIMA vs DICE: 83.5%) outperforms AlphaGenome-filtered concordance (78.9%). AlphaGenome filtering actually performs *worse* than random sampling for variants with already-known effects.
+
+| Strategy | N | DICE Concordance |
+|----------|---|------------------|
+| Top by \|eQTL beta\| | 5,000 | **89.9%** |
+| Top by eQTL p-value | 5,000 | **89.2%** |
+| Random sample | 5,000 | 82.5% |
+| AlphaGenome-filtered | 4,495 | 75.1% |
+
+**Implication:** AlphaGenome is the *wrong tool* for prioritizing variants with known effects, but the *right tool* for predicting regulatory effects of variants with **unknown** mechanisms — exactly the main study's use case (ICB therapy-associated variants from underpowered GWAS).
+
+See `docs/BENCHMARK_Plan.md` for full results and `docs/BENCHMARK_Proposal.md` for the original feasibility assessment.
 
 **AlphaGenome and related deep learning models can meaningfully prioritize your suggestive germline variants (p~10⁻⁵), but statistical power limitations with N=1,640 require combining meta-analysis, Bayesian fine-mapping with functional priors, and polygenic approaches to maximize discovery.** The four variants you've identified (rs3783947/TSHR, rs737321/PARP12, rs909723/HLA-F-AS1, rs3806268/NLRP3) represent novel candidates—none appear in published immunotherapy association studies—making functional prioritization particularly valuable. Recent advances, including the GeRI study's validated polygenic risk score for autoimmune diseases predicting ICI discontinuation (HR=1.24), demonstrate that germline genetics can predict immunotherapy outcomes even from moderately-sized cohorts.
 
@@ -157,7 +175,7 @@ For each cohort:
 ```
 1. Annotate with FUMA (automated eQTL mapping, chromatin states, MAGMA)
 2. Score with AlphaGenome API, SpliceAI, CADD
-3. Colocalize with DICE/GTEx immune cell eQTLs (COLOC)
+3. Colocalize with DICE/OneK1K immune cell eQTLs (COLOC)
 4. Fine-map with PolyFun + SuSiE using functional priors
 5. Rank by composite score: PIP × (eQTL_coloc + DL_score + pathway_membership)
 ```
@@ -211,7 +229,7 @@ The most actionable near-term analysis may be constructing autoimmune disease PR
 
 ### Critical Finding: Correct vs Incorrect Use of AlphaGenome
 
-Analysis of AlphaGenome usage in the CIMA Cytokine Atlas eQTL project revealed important limitations:
+Analysis of AlphaGenome usage in the CIMA Cytokine Atlas eQTL benchmark study (see `docs/BENCHMARK_Plan.md`) revealed important limitations:
 
 | Approach | DICE Concordance | Verdict |
 |----------|------------------|---------|
@@ -238,16 +256,22 @@ AlphaGenome excels at predicting regulatory effects for variants with **unknown*
 - Returns **only 3 RNA-seq tracks** (GTEx lymphocytes, spleen, whole blood)
 - **No chromatin tracks** (ATAC, H3K27ac, etc.) for immune filtering
 - ~50% RESOURCE_EXHAUSTED rate limiting errors
-- GTEx validation may be circular (AlphaGenome trained on GTEx)
+- GTEx validation IS circular — AlphaGenome is trained on GTEx RNA-seq data; GTEx excluded from main study validation
 
 ### Recommended Approach for This Project
 
 1. **Extract therapy-associated variants** from WES cohorts (unknown regulatory effects)
 2. **Query AlphaGenome** to predict regulatory impact
-3. **Validate against DICE/GTEx** to identify variants that ARE immune cell eQTLs
+3. **Validate against DICE/OneK1K** to identify variants that ARE immune cell eQTLs
 4. **Prioritize by composite score**: therapy_association + alphagenome_impact + eqtl_validation
 
 This workflow uses AlphaGenome for its intended purpose: **predicting effects of unknown variants**, then validating predictions against independent eQTL databases.
+
+### Experimental Validation
+
+Top Tier 1 variants (CD8+ T cell-specific, high AlphaGenome impact, multi-cohort consistency) will be validated through:
+1. **CRISPR base editing** in primary human T cell cultures to measure anti-cancer effector function
+2. **Adoptive transfer** of base-edited vs control T cells in tumor-bearing mice under checkpoint immunotherapy to measure survival differences
 
 ### Implementation
 
@@ -258,7 +282,9 @@ See `ALPHAGENOME_EQTL_VALIDATION_PLAN.md` for detailed implementation plan and s
 | Database | Cell Types | Genome Build | Expected Concordance |
 |----------|------------|--------------|----------------------|
 | DICE | 12 immune types | hg38 (lifted) | ~75-80% |
-| GTEx v10 | Bulk blood | hg38 | ~65-70% |
+| OneK1K | 14 PBMC sc-eQTL types | hg38 | ~70-80% |
 | CIMA | 69 immune subtypes | hg38 | ~80-85% |
+
+Note: GTEx excluded from validation — AlphaGenome is trained on GTEx RNA-seq data, making GTEx concordance circular.
 
 Direct eQTL matching provides stronger validation than AlphaGenome filtering when variants already have measured effects.

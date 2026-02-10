@@ -6,7 +6,7 @@ Compute composite priority scores using:
 
 1. Therapy association strength (-log10 p-value)
 2. AlphaGenome predicted regulatory impact
-3. eQTL validation (DICE, GTEx)
+3. eQTL validation (DICE, OneK1K)
 
 Tier Assignment:
 - Tier 1: Therapy-associated + AlphaGenome-predicted + eQTL-validated
@@ -88,7 +88,7 @@ def compute_priority_score(row: pd.Series) -> float:
     # eQTL validation bonus
     if row.get('dice_matched', False):
         score += 2
-    if row.get('gtex_matched', False):
+    if row.get('onek1k_matched', False):
         score += 1
 
     return score
@@ -105,7 +105,7 @@ def assign_tier(row: pd.Series) -> int:
     - 4: Therapy only
     """
     ag_impact = row.get('alphagenome_impact_mean', 0)
-    has_eqtl = row.get('dice_matched', False) or row.get('gtex_matched', False)
+    has_eqtl = row.get('dice_matched', False) or row.get('onek1k_matched', False)
     has_high_ag = ag_impact >= ALPHAGENOME_MEDIUM_THRESHOLD
 
     if has_high_ag and has_eqtl:
@@ -173,14 +173,14 @@ def generate_report(df: pd.DataFrame, output_path: Path):
 
 These variants have the strongest evidence: therapy association + AlphaGenome prediction + eQTL validation.
 
-| rsid | gene | cohort | pval | AG impact | DICE | GTEx | Priority |
-|------|------|--------|------|-----------|------|------|----------|
+| rsid | gene | cohort | pval | AG impact | DICE | OneK1K | Priority |
+|------|------|--------|------|-----------|------|--------|----------|
 """
 
     for _, row in tier1.iterrows():
         dice_gene = row.get('dice_gene', '') if pd.notna(row.get('dice_gene', '')) else '-'
-        gtex_gene = str(row.get('gtex_gene', ''))[:12] if pd.notna(row.get('gtex_gene', '')) else '-'
-        report += f"| {row['rsid']} | {row['gene']} | {row['cohort'][:20]} | {row['pval']:.2e} | {row['alphagenome_impact_mean']:.3f} | {dice_gene} | {gtex_gene} | {row['priority_score']:.1f} |\n"
+        onek1k_gene = str(row.get('onek1k_gene', ''))[:12] if pd.notna(row.get('onek1k_gene', '')) else '-'
+        report += f"| {row['rsid']} | {row['gene']} | {row['cohort'][:20]} | {row['pval']:.2e} | {row['alphagenome_impact_mean']:.3f} | {dice_gene} | {onek1k_gene} | {row['priority_score']:.1f} |\n"
 
     # Top variants by cohort
     report += """
@@ -319,8 +319,8 @@ def main():
     top10 = df.head(10)
     for _, row in top10.iterrows():
         dice = "DICE" if row.get('dice_matched', False) else ""
-        gtex = "GTEx" if row.get('gtex_matched', False) else ""
-        eqtl = f"[{dice}{'+' if dice and gtex else ''}{gtex}]" if dice or gtex else ""
+        onek1k = "OneK1K" if row.get('onek1k_matched', False) else ""
+        eqtl = f"[{dice}{'+' if dice and onek1k else ''}{onek1k}]" if dice or onek1k else ""
         log(f"  {row['rsid']:15} | {row['gene']:10} | {row['cohort'][:25]:25} | "
             f"p={row['pval']:.1e} | AG={row['alphagenome_impact_mean']:.2f} | "
             f"T{row['tier']} {eqtl}")
