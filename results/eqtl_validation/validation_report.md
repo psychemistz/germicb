@@ -18,9 +18,9 @@ Only **independent** eQTL databases are used for validation:
 |--------|-------|
 | Total variants | 15,918 |
 | DICE matched | 3,546 (22.3%) |
-| OneK1K matched | 3 (0.0%) |
-| Either matched | 3,548 (22.3%) |
-| Both matched | 1 |
+| OneK1K matched | 3,820 (24.0%) |
+| Either matched | 5,401 (33.9%) |
+| Both matched | 1,965 |
 
 ## AlphaGenome vs DICE Concordance
 
@@ -34,9 +34,9 @@ Only **independent** eQTL databases are used for validation:
 
 | Metric | Value |
 |--------|-------|
-| Matched variants | 3 |
-| Direction concordance | 66.7% |
-| Spearman correlation | 0.500 (p=6.67e-01) |
+| Matched variants | 3,820 |
+| Direction concordance | 51.4% |
+| Spearman correlation | 0.023 (p=1.51e-01) |
 
 ## Sanity Check: Cohort-Level eQTLs vs Reference Databases + AlphaGenome
 
@@ -57,9 +57,9 @@ independent reference databases and AlphaGenome predictions. This validates that
 
 | Metric | Value |
 |--------|-------|
-| Matched pairs | 4 |
-| Direction concordance | 100.0% |
-| Spearman correlation | -1.000 (p=0.00e+00) |
+| Matched pairs | 40 |
+| Direction concordance | 80.0% |
+| Spearman correlation | 0.541 (p=3.15e-04) |
 
 ### Cohort eQTLs vs AlphaGenome Predictions
 
@@ -80,50 +80,50 @@ Showing variants with highest AlphaGenome impact that are also validated in eQTL
 | rsid | gene | pval | AG impact | DICE | OneK1K |
 |------|------|------|-----------|------|--------|
 | rs11555935 | TIMM10B | 8.86e-04 | 2.2638 | + TIMM10B_ENSG00000132286 | - |
-| rs135110 | SLC5A1 | 2.70e-04 | 2.0676 | + YWHAH | - |
-| rs3795732 | GPATCH4 | 1.66e-04 | 1.9797 | + TTC24 | - |
-| rs11785333 | BLK | 6.72e-04 | 1.8580 | + RP11-148O21.4 | - |
-| rs879461 | NAXE | 3.95e-03 | 1.6725 | + TTC24 | - |
+| rs135110 | SLC5A1 | 2.70e-04 | 2.0676 | + YWHAH | + YWHAH |
+| rs3795732 | GPATCH4 | 1.66e-04 | 1.9797 | + TTC24 | + APOA1BP |
+| rs11785333 | BLK | 6.72e-04 | 1.8580 | + RP11-148O21.4 | + BLK |
+| rs879461 | NAXE | 3.95e-03 | 1.6725 | + TTC24 | + APOA1BP |
 
 ### Melanoma_CTLA4_Snyder2014
 
 | rsid | gene | pval | AG impact | DICE | OneK1K |
 |------|------|------|-----------|------|--------|
-| rs135110 | SLC5A1 | 4.50e-02 | 2.0676 | + YWHAH | - |
-| rs10190751 | CFLAR | 8.20e-03 | 1.3511 | + PPIL3 | - |
-| rs1803632 | GBP2 | 3.34e-03 | 1.2183 | + GBP7 | - |
-| rs6666846 | GBP7 | 4.05e-03 | 1.1846 | + GBP7 | - |
-| rs12627971 | GGT5 | 1.51e-03 | 1.1435 | + UPB1 | - |
-
-### Hepatocellular_Atezolizumab_Finn2020
-
-| rsid | gene | pval | AG impact | DICE | OneK1K |
-|------|------|------|-----------|------|--------|
-| rs3750207 | ZC3H3 | 4.71e-02 | 1.5733 | + RP11-661A12.5 | - |
-| rs732284 | PARP1 | 6.94e-03 | 1.5395 | + PARP1 | - |
-| rs11098492 | MYOZ2 | 7.21e-03 | 1.1673 | + RP11-33B1.2 | - |
-| rs17851970 | DIS3L | 3.21e-02 | 1.1516 | + MAP2K1 | - |
-| rs11658342 | SERPINF1 | 3.78e-03 | 1.0980 | + SERPINF1 | - |
+| rs135110 | SLC5A1 | 4.50e-02 | 2.0676 | + YWHAH | + YWHAH |
+| rs3787429 | HRH3 | 6.43e-03 | 1.4423 | - | + MTG2 |
+| rs10190751 | CFLAR | 8.20e-03 | 1.3511 | + PPIL3 | + PPIL3 |
+| rs1803632 | GBP2 | 3.34e-03 | 1.2183 | + GBP7 | + GBP7 |
+| rs6666846 | GBP7 | 4.05e-03 | 1.1846 | + GBP7 | + GBP7 |
 
 ### Melanoma_Ipilimumab_VanAllen2015
 
 | rsid | gene | pval | AG impact | DICE | OneK1K |
 |------|------|------|-----------|------|--------|
-| rs5753137 | ENSG00000273428 | 6.36e-04 | 1.4275 | + TBC1D10A | - |
+| rs1761463 | LILRA5 | 7.69e-04 | 1.8832 | - | + LILRA3 |
+| rs3740691 | ARFGAP2 | 9.04e-03 | 1.6229 | - | + FNBP4 |
+| rs5753137 | ENSG00000273428 | 6.36e-04 | 1.4275 | + TBC1D10A | + RP4-539M6.22 |
+| rs729421 | RABGGTA | 5.44e-03 | 1.4164 | - | + DHRS1 |
 | rs2390814 | TPT1P7 | 8.95e-03 | 1.4024 | + FAM221A | - |
-| rs3802509 | CCNY | 2.97e-03 | 1.2398 | + RP11-324I22.4 | - |
-| rs2140335 | HIGD2AP2 | 2.64e-02 | 1.1891 | + ZNF589 | - |
-| rs17851970 | DIS3L | 9.28e-03 | 1.1516 | + MAP2K1 | - |
+
+### Hepatocellular_Atezolizumab_Finn2020
+
+| rsid | gene | pval | AG impact | DICE | OneK1K |
+|------|------|------|-----------|------|--------|
+| rs6276 | DRD2 | 4.32e-04 | 1.6377 | - | + TTC12 |
+| rs3750207 | ZC3H3 | 4.71e-02 | 1.5733 | + RP11-661A12.5 | + RP11-661A12.5 |
+| rs732284 | PARP1 | 6.94e-03 | 1.5395 | + PARP1 | + PARP1 |
+| rs6275 | DRD2 | 5.27e-04 | 1.3656 | - | + TTC12 |
+| rs4396136 | ARHGAP30 | 9.71e-03 | 1.2830 | - | + TSTD1 |
 
 ### CCRCC_ICB_Miao2018
 
 | rsid | gene | pval | AG impact | DICE | OneK1K |
 |------|------|------|-----------|------|--------|
-| rs55743020 | ZNF607 | 8.95e-03 | 1.3857 | + AC012309.5 | - |
+| rs11668681 | SLC27A1 | 9.26e-03 | 1.4643 | - | + SLC27A1 |
+| rs55743020 | ZNF607 | 8.95e-03 | 1.3857 | + AC012309.5 | + ZNF781 |
 | rs2140335 | HIGD2AP2 | 1.07e-02 | 1.1891 | + ZNF589 | - |
-| rs1079276 | NBEAL2 | 7.40e-03 | 1.1189 | + NBEAL2 | - |
-| rs1150736 | PPP1R11 | 7.90e-03 | 1.0905 | + HLA-K | - |
-| rs4956981 | PLEKHG4B | 5.75e-03 | 1.0791 | + CCDC127 | - |
+| rs7163367 | WDR93 | 2.61e-03 | 1.1891 | - | + MESP1 |
+| rs941897 | EVL | 6.65e-03 | 1.1758 | - | + SLC25A29 |
 
 
 ## Interpretation
@@ -133,7 +133,7 @@ GTEx is excluded because AlphaGenome is trained on GTEx RNA-seq data (circular v
 
 **Key findings:**
 - 3,546 therapy-associated variants (22.3%) are known DICE immune cell eQTLs
-- 3 therapy-associated variants (0.0%) are known OneK1K sc-eQTLs
+- 3,820 therapy-associated variants (24.0%) are known OneK1K sc-eQTLs
 
 **Note on AlphaGenome use case:**
 This is the CORRECT use of AlphaGenome — predicting regulatory effects for variants with
@@ -142,4 +142,4 @@ databases (DICE, OneK1K) provides validation that AlphaGenome-predicted regulato
 have measurable eQTL effects in immune cells.
 
 ---
-Generated: 2026-02-10 18:22:55
+Generated: 2026-02-10 19:36:10

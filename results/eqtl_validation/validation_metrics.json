@@ -7,17 +7,17 @@
       "spearman_pval": 0.22044735610777214
     },
     "onek1k": {
-      "n_matched": 3,
-      "direction_concordance": 0.6666666666666666,
-      "spearman_r": 0.5,
-      "spearman_pval": 0.6666666666666667
+      "n_matched": 3820,
+      "direction_concordance": 0.5138743455497382,
+      "spearman_r": 0.02322168683123016,
+      "spearman_pval": 0.1512965605749055
     },
     "overall": {
       "total_variants": 15918,
-      "any_eqtl_matched": 3548,
-      "both_matched": 1,
-      "dice_only": 3545,
-      "onek1k_only": 2
+      "any_eqtl_matched": 5401,
+      "both_matched": 1965,
+      "dice_only": 1581,
+      "onek1k_only": 1855
     }
   },
   "cohort_sanity_check": {
@@ -29,11 +29,16 @@
       "per_cohort": {}
     },
     "cohort_vs_onek1k": {
-      "n_matched": 4,
-      "direction_concordance": 1.0,
-      "spearman_r": -1.0,
-      "spearman_pval": 0.0,
-      "per_cohort": {}
+      "n_matched": 40,
+      "direction_concordance": 0.8,
+      "spearman_r": 0.5407582183788902,
+      "spearman_pval": 0.00031525301403510574,
+      "per_cohort": {
+        "Melanoma_PD1_Hugo2016": {
+          "n": 22,
+          "concordance": 0.8181818181818182
+        }
+      }
     },
     "cohort_vs_alphagenome": {
       "n_matched": 548,
