@@ -77,10 +77,16 @@ def load_dice(dice_dir: Optional[Path] = None) -> Optional[pd.DataFrame]:
 
 def load_onek1k(path: Optional[Path] = None, fdr_threshold: float = FDR_THRESHOLD) -> Optional[pd.DataFrame]:
     """
-    Load OneK1K single-cell PBMC eQTLs (hg38).
+    Load OneK1K single-cell PBMC eQTLs.
 
     Source: Yazar et al., Science 2022 — ~1.27M PBMCs from 982 donors, 14 cell types.
     Independent of AlphaGenome training data.
+
+    Reads the full eqtl_table.tsv.gz (~21 GB) in 1M-row chunks, filtering to
+    FDR < 0.05 per chunk to keep memory manageable.
+
+    Note: chrom/pos are hg19 (retained for reference). Matching against hg38
+    therapy variants should use rsID-based matching, not position-based.
 
     Returns DataFrame with columns:
         chrom, pos, rsid, gene, beta, pval, onek1k_celltype
@@ -91,14 +97,30 @@ def load_onek1k(path: Optional[Path] = None, fdr_threshold: float = FDR_THRESHOL
         log(f"  OneK1K file not found: {path}")
         return None
 
-    log(f"Loading OneK1K eQTLs: {path}")
+    log(f"Loading OneK1K eQTLs (chunked): {path}")
 
-    onek1k_df = pd.read_csv(path, sep='\t')
-    log(f"  Loaded {len(onek1k_df):,} records")
+    chunks = []
+    total_read = 0
+    total_kept = 0
+    chunk_size = 1_000_000
 
-    if 'FDR' in onek1k_df.columns:
-        onek1k_df = onek1k_df[onek1k_df['FDR'] < fdr_threshold].copy()
-        log(f"  After FDR < {fdr_threshold} filter: {len(onek1k_df):,}")
+    for chunk in pd.read_csv(path, sep='\t', chunksize=chunk_size):
+        total_read += len(chunk)
+        if 'FDR' in chunk.columns:
+            chunk = chunk[chunk['FDR'] < fdr_threshold]
+        total_kept += len(chunk)
+        if len(chunk) > 0:
+            chunks.append(chunk)
+        if total_read % 10_000_000 == 0:
+            log(f"  Read {total_read:,} rows, kept {total_kept:,} (FDR < {fdr_threshold})")
+
+    log(f"  Total read: {total_read:,}, kept after FDR filter: {total_kept:,}")
+
+    if not chunks:
+        log("  No OneK1K records passed FDR filter")
+        return None
+
+    onek1k_df = pd.concat(chunks, ignore_index=True)
 
     onek1k_df['chrom'] = 'chr' + onek1k_df['CHR'].astype(str)
     onek1k_df['pos'] = onek1k_df['POS'].astype(int)

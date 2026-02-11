@@ -30,7 +30,7 @@ PRIORITIZED_DIR = RESULTS_DIR / 'prioritized'
 # ==============================================================================
 
 DICE_HG38_DIR = DATA_DIR / 'eqtl_references' / 'dice' / 'hg38'
-ONEK1K_PATH = DATA_DIR / 'eqtl_references' / 'oneK1K' / 'esnp_table.tsv.gz'
+ONEK1K_PATH = DATA_DIR / 'eqtl_references' / 'oneK1K' / 'eqtl_table.tsv.gz'
 CIMA_EQTL_DIR = Path('/data/Jiang_Lab/Data/Seongyong/CIMA/xQTL')
 
 # ==============================================================================

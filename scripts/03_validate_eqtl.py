@@ -7,7 +7,7 @@ Prioritizing Immunotherapy-Associated Regulatory Germline Variants Through Alpha
 Match immunotherapy-associated variants against independent eQTL sources:
 
 1. DICE - Immune cell type-specific eQTLs (12 cell types, hg38)
-2. OneK1K - Single-cell PBMC eQTLs (14 cell types, hg38; Yazar et al., Science 2022)
+2. OneK1K - Single-cell PBMC eQTLs (14 cell types, hg19; matched by rsID; Yazar et al., Science 2022)
 3. Cohort eQTLs - Per-cohort local eQTL analysis (sanity check, hg19->hg38 liftover)
 
 GTEx is EXCLUDED from validation — AlphaGenome is trained on GTEx RNA-seq data,
@@ -16,7 +16,7 @@ making GTEx concordance circular (memorized training signal, not predictive powe
 Input:
 - results/alphagenome/alphagenome_predictions.h5ad
 - DICE hg38 data (from cytokine atlas liftover)
-- OneK1K sc-eQTLs (data/eqtl_references/oneK1K/esnp_table.tsv.gz)
+- OneK1K sc-eQTLs (data/eqtl_references/oneK1K/eqtl_table.tsv.gz, rsID-matched)
 - Per-cohort 9eQTL/output/fin_eqtl_tbl.txt (optional sanity check)
 
 Output:
@@ -46,7 +46,7 @@ from lib.config import (
 from lib.log import log
 from lib.variants import make_pos_key
 from lib.eqtl import load_dice, load_onek1k, load_cohort_eqtls
-from lib.matching import match_by_position, compute_concordance
+from lib.matching import match_by_position, match_by_rsid, compute_concordance
 
 
 def load_alphagenome_predictions(input_path: Path) -> pd.DataFrame:
@@ -465,7 +465,7 @@ def main():
     if not args.skip_onek1k:
         onek1k_df = load_onek1k()
         if onek1k_df is not None:
-            variants_df = match_by_position(variants_df, onek1k_df, 'onek1k')
+            variants_df = match_by_rsid(variants_df, onek1k_df, 'onek1k')
         else:
             variants_df['onek1k_matched'] = False
     else:
